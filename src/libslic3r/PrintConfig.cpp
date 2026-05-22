@@ -10634,6 +10634,36 @@ CLIMiscConfigDef::CLIMiscConfigDef()
     def->cli_params = "\"setting1.json;setting2.json\"";
     def->set_default_value(new ConfigOptionStrings());
 
+    def = this->add("screenshot", coString);
+    def->label = L("Screenshot");
+    def->tooltip = L("Save a PNG screenshot of the loaded model to this path (GUI mode only).");
+    def->cli_params = "output.png";
+    def->set_default_value(new ConfigOptionString(""));
+
+    def = this->add("screenshot_camera", coString);
+    def->label = L("Screenshot camera view");
+    def->tooltip = L("Named view for --screenshot: iso (default), top, front, right, left, bottom, rear, top_front.");
+    def->cli_params = "iso|top|front|right|left|bottom|rear|top_front";
+    def->set_default_value(new ConfigOptionString("iso"));
+
+    def = this->add("screenshot_size", coString);
+    def->label = L("Screenshot size");
+    def->tooltip = L("Output resolution for --screenshot, e.g. 1920x1080 (default) or 3840x2160.");
+    def->cli_params = "WxH";
+    def->set_default_value(new ConfigOptionString("1920x1080"));
+
+    def = this->add("export_support_stl", coString);
+    def->label = L("Export Support STL");
+    def->tooltip = L("After slicing, save the tree-support 3D mesh as a binary STL to this path.");
+    def->cli_params = "support.stl";
+    def->set_default_value(new ConfigOptionString(""));
+
+    def = this->add("set", coStrings);
+    def->label = L("Set config key");
+    def->tooltip = L("Override any print config key from the CLI: --set key=value. May be repeated.");
+    def->cli_params = "key=value";
+    def->set_default_value(new ConfigOptionStrings());
+
     def = this->add("load_filaments", coStrings);
     def->label = L("Load Filament Settings");
     def->tooltip = L("Load filament settings from the specified file list.");

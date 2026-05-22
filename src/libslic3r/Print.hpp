@@ -981,6 +981,9 @@ public:
     const PrintStatistics&      print_statistics() const { return m_print_statistics; }
     PrintStatistics&            print_statistics() { return m_print_statistics; }
 
+    void                        set_support_stl_export_path(const std::string &p) { m_support_stl_export_path = p; }
+    const std::string&          support_stl_export_path() const { return m_support_stl_export_path; }
+
     const StatisticsByExtruderCount statistics_by_extruder() const { return m_statistics_by_extruder_count; }
     StatisticsByExtruderCount& statistics_by_extruder() { return m_statistics_by_extruder_count; }
 
@@ -1135,6 +1138,7 @@ private:
 
     PrintConfig                             m_config;
     PrintObjectConfig                       m_default_object_config;
+    std::string                             m_support_stl_export_path;
     PrintRegionConfig                       m_default_region_config;
     PrintObjectPtrs                         m_objects;
     PrintRegionPtrs                         m_print_regions;

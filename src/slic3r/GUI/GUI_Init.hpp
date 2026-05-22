@@ -24,6 +24,10 @@ struct GUI_InitParams
     std::vector<std::string>    load_configs;
     DynamicPrintConfig          extra_config;
     std::vector<std::string>    input_files;
+    std::string                 screenshot_path;
+    std::string                 screenshot_camera;  // named view: iso, top, front, right, left, bottom, rear, top_front
+    std::string                 screenshot_size;    // "WxH", e.g. "1920x1080"
+    std::vector<std::string>    set_overrides;  // --set key=value pairs
 
     std::pair<int, int>         opengl_version                  { 0, 0 };
     bool                        opengl_debug                    { false };

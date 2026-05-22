@@ -20,12 +20,14 @@
 #include "Polyline.hpp"
 #include "MutablePolygon.hpp"
 #include "SupportCommon.hpp"
+#include "TriangleMesh.hpp"
 #include "TriangleMeshSlicer.hpp"
 #include "TreeSupport.hpp"
 #include "I18N.hpp"
 
 #include <cassert>
 #include <chrono>
+#include <mutex>
 #include <optional>
 #include <stdio.h>
 #include <string>
@@ -3768,8 +3770,12 @@ void organic_draw_branches(
     MeshSlicingParams mesh_slicing_params;
     mesh_slicing_params.mode = MeshSlicingParams::SlicingMode::Positive;
 
+    // Collect branch meshes for --export-support-stl
+    indexed_triangle_set    full_support_mesh;
+    tbb::spin_mutex         support_mesh_mutex;
+
     tbb::parallel_for(tbb::blocked_range<size_t>(0, trees.size(), 1),
-        [&trees, &volumes, &config, &slicing_params, &move_bounds, &mesh_slicing_params, &interface_placer, &throw_on_cancel](const tbb::blocked_range<size_t> &range) {
+        [&trees, &volumes, &config, &slicing_params, &move_bounds, &mesh_slicing_params, &interface_placer, &throw_on_cancel, &full_support_mesh, &support_mesh_mutex](const tbb::blocked_range<size_t> &range) {
             indexed_triangle_set    partial_mesh;
             std::vector<float>      slice_z;
             std::vector<Polygons>   bottom_contacts;
@@ -3779,6 +3785,10 @@ void organic_draw_branches(
                     // Triangulate the tube.
                     partial_mesh.clear();
                     std::pair<float, float> zspan = extrude_branch(branch.path, config, slicing_params, move_bounds, partial_mesh);
+                    {
+                        tbb::spin_mutex::scoped_lock lock(support_mesh_mutex);
+                        its_merge(full_support_mesh, partial_mesh);
+                    }
                     LayerIndex layer_begin = branch.has_root ?
                         branch.path.front()->state.layer_idx : 
                         std::min(branch.path.front()->state.layer_idx, layer_idx_ceil(slicing_params, config, zspan.first));
@@ -4008,6 +4018,17 @@ void organic_draw_branches(
                 }
             }
         }, tbb::simple_partitioner());
+
+    // Write the full tree-support mesh if --export-support-stl was requested
+    {
+        const std::string &stl_path = print_object.print()->support_stl_export_path();
+        if (!stl_path.empty() && !full_support_mesh.indices.empty()) {
+            if (its_write_stl_binary(stl_path.c_str(), "support", full_support_mesh))
+                BOOST_LOG_TRIVIAL(info) << "support STL saved: " << stl_path;
+            else
+                BOOST_LOG_TRIVIAL(error) << "support STL write failed: " << stl_path;
+        }
+    }
 
     tbb::parallel_for(tbb::blocked_range<size_t>(0, trees.size(), 1),
         [&trees, &throw_on_cancel](const tbb::blocked_range<size_t> &range) {

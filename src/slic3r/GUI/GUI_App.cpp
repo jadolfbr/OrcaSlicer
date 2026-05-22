@@ -81,6 +81,8 @@
 #include "MainFrame.hpp"
 #include "Plater.hpp"
 #include "GLCanvas3D.hpp"
+#include "libslic3r/GCode/ThumbnailData.hpp"
+#include "libslic3r/GCode/Thumbnails.hpp"
 #include "EncodedFilament.hpp"
 #include "GeneratedConfig.hpp"
 
@@ -758,6 +760,73 @@ void GUI_App::post_init()
                 }
                 this->plater()->set_project_filename(_L("Untitled"));
                 this->plater()->load_files(input_files);
+
+                // --screenshot: wait for GL to initialize, then render to FBO and save
+                const std::string scr_path   = this->init_params->screenshot_path;
+                const std::string scr_camera = this->init_params->screenshot_camera;
+                const std::string scr_size   = this->init_params->screenshot_size;
+                if (!scr_path.empty()) {
+                    // Parse --screenshot-camera into ViewAngleType
+                    Camera::ViewAngleType view_angle = Camera::ViewAngleType::Iso;
+                    if      (scr_camera == "top")       view_angle = Camera::ViewAngleType::Top;
+                    else if (scr_camera == "front")     view_angle = Camera::ViewAngleType::Front;
+                    else if (scr_camera == "right")     view_angle = Camera::ViewAngleType::Right;
+                    else if (scr_camera == "left")      view_angle = Camera::ViewAngleType::Left;
+                    else if (scr_camera == "bottom")    view_angle = Camera::ViewAngleType::Bottom;
+                    else if (scr_camera == "rear")      view_angle = Camera::ViewAngleType::Rear;
+                    else if (scr_camera == "top_front") view_angle = Camera::ViewAngleType::Top_Front;
+                    // Parse --screenshot-size "WxH"
+                    unsigned int scr_w = 1920, scr_h = 1080;
+                    {
+                        const auto x = scr_size.find('x');
+                        if (x != std::string::npos) {
+                            try {
+                                scr_w = std::stoul(scr_size.substr(0, x));
+                                scr_h = std::stoul(scr_size.substr(x + 1));
+                            } catch (...) { scr_w = 1920; scr_h = 1080; }
+                        }
+                    }
+                    // One CallAfter to let the window show, then a short timer so GL is warm
+                    CallAfter([this, scr_path, scr_camera, view_angle, scr_w, scr_h]() {
+                        auto* timer = new wxTimer(mainframe, wxID_ANY);
+                        mainframe->Bind(wxEVT_TIMER, [this, scr_path, scr_camera, view_angle, scr_w, scr_h, timer](wxTimerEvent&) {
+                            timer->Stop();
+                            delete timer;
+                            GLCanvas3D* canvas = this->plater()->get_view3D_canvas3D();
+                            if (!canvas) {
+                                BOOST_LOG_TRIVIAL(error) << "screenshot: no canvas";
+                                CallAfter([this]() { this->Exit(); });
+                                return;
+                            }
+                            // Ensure GL context is current and GLAD/shaders are initialized
+                            if (!canvas->make_current_for_postinit() || !this->init_opengl()) {
+                                BOOST_LOG_TRIVIAL(error) << "screenshot: GL init failed";
+                                CallAfter([this]() { this->Exit(); });
+                                return;
+                            }
+                            ThumbnailData data;
+                            ThumbnailsParams tparams{ {Vec2d(scr_w, scr_h)}, true, true, false, false, 0 };
+                            canvas->render_thumbnail(data, scr_w, scr_h, tparams, Camera::EType::Ortho, view_angle);
+                            if (data.is_valid()) {
+                                auto png = GCodeThumbnails::compress_thumbnail(data, GCodeThumbnailsFormat::PNG);
+                                if (png && png->data && png->size > 0) {
+                                    FILE* f = boost::nowide::fopen(scr_path.c_str(), "wb");
+                                    if (f) {
+                                        fwrite(png->data, 1, png->size, f);
+                                        fclose(f);
+                                        BOOST_LOG_TRIVIAL(info) << "screenshot saved: " << scr_path
+                                            << " (" << scr_w << "x" << scr_h << ", " << scr_camera << ")";
+                                    }
+                                }
+                            } else {
+                                BOOST_LOG_TRIVIAL(error) << "screenshot: render_thumbnail returned invalid data";
+                            }
+                            CallAfter([this]() { this->Exit(); });
+                        }, timer->GetId());
+                        timer->StartOnce(1500); // 1.5s: enough for first paint + GL init
+                    });
+                }
+
                 try {
                     if (!input_files.empty()) {
                         std::string           file_path = input_files.front().ToStdString();
@@ -770,6 +839,31 @@ void GUI_App::post_init()
                 }
             }
         }
+    }
+
+    // Load process/machine profile passed via --load-settings in GUI mode
+    // Use raw JSON load to bypass preset-bundle inheritance resolution, which errors on custom profiles
+    if (!this->init_params->load_configs.empty()) {
+        const std::string &cfg_path = this->init_params->load_configs.back();
+        DynamicPrintConfig loaded_cfg;
+        ConfigSubstitutionContext subs(ForwardCompatibilitySubstitutionRule::Enable);
+        std::map<std::string, std::string> kvs;
+        std::string reason;
+        loaded_cfg.load_from_json(cfg_path, subs, false, kvs, reason);
+        this->mainframe->load_config(loaded_cfg);
+    }
+    // Apply --set key=value overrides (after profile load so they win)
+    if (!this->init_params->set_overrides.empty()) {
+        DynamicPrintConfig overrides;
+        for (const std::string &kv : this->init_params->set_overrides) {
+            const auto eq = kv.find('=');
+            if (eq == std::string::npos) continue;
+            const std::string key = kv.substr(0, eq);
+            const std::string val = kv.substr(eq + 1);
+            ConfigOption *opt = overrides.option(key, true);
+            if (opt) opt->deserialize(val);
+        }
+        this->mainframe->load_config(overrides);
     }
 
 //#if BBL_HAS_FIRST_PAGE

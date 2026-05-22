@@ -1316,6 +1316,12 @@ int CLI::run(int argc, char **argv)
         params.argv = argv;
         params.load_configs = load_configs;
         params.extra_config = std::move(m_extra_config);
+        params.screenshot_path   = m_config.opt_string("screenshot");
+        params.screenshot_camera = m_config.opt_string("screenshot_camera");
+        params.screenshot_size   = m_config.opt_string("screenshot_size");
+        const ConfigOptionStrings *opt_set_gui = m_config.option<ConfigOptionStrings>("set");
+        if (opt_set_gui)
+            params.set_overrides = opt_set_gui->values;
 
         std::vector<std::string>    gcode_files;
         std::vector<std::string>    non_gcode_files;
@@ -5904,6 +5910,28 @@ int CLI::run(int argc, char **argv)
                         DynamicPrintConfig new_print_config = m_print_config;
                         new_print_config.apply(*part_plate->config());
                         new_print_config.apply(m_extra_config, true);
+                        // Apply --set key=value overrides last so they win over loaded profiles
+                        {
+                            const ConfigOptionStrings *opt_set = m_config.option<ConfigOptionStrings>("set");
+                            if (opt_set) {
+                                for (const std::string &kv : opt_set->values) {
+                                    const auto eq = kv.find('=');
+                                    if (eq == std::string::npos) {
+                                        BOOST_LOG_TRIVIAL(warning) << "--set: skipping '" << kv << "' (expected key=value)";
+                                        continue;
+                                    }
+                                    const std::string key = kv.substr(0, eq);
+                                    const std::string val = kv.substr(eq + 1);
+                                    ConfigOption *opt = new_print_config.option(key);
+                                    if (!opt) {
+                                        BOOST_LOG_TRIVIAL(warning) << "--set: unknown key '" << key << "'";
+                                        continue;
+                                    }
+                                    opt->deserialize(val);
+                                    BOOST_LOG_TRIVIAL(info) << "--set: " << key << " = " << val;
+                                }
+                            }
+                        }
 						if (m_print_config.option<ConfigOptionFloat>("layer_height"))
                             sliced_info.layer_height = m_print_config.option<ConfigOptionFloat>("layer_height")->value;
 						if (m_print_config.option<ConfigOptionInt>("wall_loops"))
@@ -5958,6 +5986,9 @@ int CLI::run(int argc, char **argv)
                             for (int index = 0; index < filament_count; index++)
                                 final_filament_maps[index] = 1;
                         }
+                        // Clamp 0-values: guard against OOB in update_values_to_printer_extruders_for_multiple_filaments
+                        for (auto& v : final_filament_maps)
+                            if (v < 1) v = 1;
                         if(!new_print_config.has("nozzle_volume_type")) {
                             //set default nozzle_volume_type
                             ConfigOptionEnumsGeneric* final_nozzle_volume_type_opt = new_print_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true);
@@ -6058,6 +6089,13 @@ int CLI::run(int argc, char **argv)
                                 BOOST_LOG_TRIVIAL(info) << "set print's callback to default_status_callback.";
                                 print->set_status_callback(default_status_callback);
 #endif
+
+                                // Pass --export-support-stl path before slicing
+                                {
+                                    const std::string &sup_path = m_config.opt_string("export_support_stl");
+                                    if (!sup_path.empty())
+                                        print_fff->set_support_stl_export_path(sup_path);
+                                }
 
                                 //update information for brim
                                 const PrintConfig& print_config = print_fff->config();
